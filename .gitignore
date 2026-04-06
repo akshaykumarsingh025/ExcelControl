@@ -2,3 +2,16 @@ __pycache__/
 *.pyc
 .ruff_cache/
 *.xlsx
+
+node_modules/
+Library/
+Logs/
+Temp/
+UserSettings/
+obj/
+bin/
+.vs/
+.idea/
+Builds/
+venv/
+__pycache__/
