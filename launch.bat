@@ -3,7 +3,8 @@ title ExcelAI Launcher
 color 0A
 
 echo ============================================
-echo    ExcelAI - Powered by Ollama gemma4:e4b
+echo    ExcelAI - AI-Powered Excel Controller
+echo    Powered by Ollama
 echo ============================================
 echo.
 
@@ -11,6 +12,10 @@ rem Check Python is installed
 python --version >nul 2>&1
 if %errorlevel% neq 0 goto :NoPython
 echo [OK] Python found.
+
+rem Create session directory
+if not exist "%USERPROFILE%\.excelai" mkdir "%USERPROFILE%\.excelai"
+echo [OK] Session directory ready.
 
 rem Check if Ollama is running
 echo [1/3] Checking Ollama...
@@ -31,21 +36,25 @@ echo [2/3] Checking Python dependencies...
 python -m pip install xlwings ollama --quiet
 echo [OK] Dependencies ready.
 
-rem Check model exists
-echo [3/3] Checking gemma4:e4b model...
-ollama list | find "gemma4:e4b" >nul 2>&1
+rem Check if any model is available (not just gemma4)
+echo [3/3] Checking Ollama models...
+ollama list 2>nul | findstr /R "gemma llama qwen mistral deepseek phi" >nul 2>&1
 if %errorlevel% neq 0 goto :PullModel
-echo [OK] gemma4:e4b model found.
+echo [OK] At least one Ollama model found.
 goto :LaunchApp
 
 :PullModel
-echo [INFO] Pulling gemma4:e4b model (first time only, may take a few minutes)...
+echo [INFO] No common model found. Pulling gemma4:e4b...
+echo        (You can select other models later from the app.)
 ollama pull gemma4:e4b
 echo [OK] Model pulled successfully.
 
 :LaunchApp
 echo.
 echo [LAUNCH] Starting ExcelAI...
+echo          - Pick your model from the Controls tab
+echo          - Toggle Dry-Run to preview before executing
+echo          - Toggle Analysis Mode to analyze data
 echo.
 python main.py
 
