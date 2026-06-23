@@ -319,6 +319,149 @@ EXAMPLE OUTPUT:
 ws.range("A1").add_hyperlink("https://example.com", "Click Here", "Go to example")
 """
 
+VISION_SYSTEM_PROMPT = """
+You are an Excel automation AI with vision capabilities. An image of a HANDWRITTEN table has been provided.
+The image is binarized (black ink on white background). Read each cell carefully — this is handwritten text, not typed.
+
+Follow the user's Step 1 and Step 2 instructions exactly.
+
+RULES:
+1. ONLY respond with pure Python code. No extra explanation. No markdown. No backticks.
+2. The active sheet object is available as: ws
+3. The active workbook is available as: wb
+4. Never import xlwings.
+5. Never call wb.save() or wb.close().
+6. NUMBERS MUST BE EXACT — account numbers, amounts, IDs — every digit matters.
+7. NAMES MUST BE CORRECT — spell bank names, people, places exactly as written.
+8. Empty cells = None.
+9. Mixed content like "A/C 12345" — preserve both parts exactly.
+10. In xlwings, a 1D list writes horizontally. Use nested 2D lists for rows.
+11. Count ALL rows carefully before writing code. Write the count as a comment at the top.
+12. Identify the exact column headers as written. Do NOT merge columns, do NOT split columns. Preserve the column order as seen in the image.
+
+HANDWRITTEN TEXT RULES:
+- Handwriting can be messy — use context to resolve ambiguity:
+  * In name fields: letters are more likely than numbers (e.g. 'l' not '1', 'O' not '0')
+  * In amount/number fields: numbers are more likely (e.g. '0' not 'O')
+  * S.No (serial number) column: should be sequential integers 1, 2, 3...
+- Common handwritten confusions: 1 vs l vs I, 0 vs O vs Q, 5 vs S, 2 vs Z
+- Preserve spacing and casing as written
+- If a word is partially illegible, use your best interpretation based on context
+- Row alignment may be imperfect — rows may be slightly tilted or unevenly spaced
+- Cell boundaries may not be perfectly defined — use column alignment to determine columns
+"""
+
+
+# ── Pass 1: Structure detection prompt ────────────────────────────────────
+STRUCTURE_ANALYSIS_PROMPT = """You are analyzing a HANDWRITTEN table image to identify its structure.
+
+CRITICAL: This image may show an OPEN REGISTER or BOOK with TWO PAGES side by side.
+If so, the table spans BOTH pages continuously — the LEFT page columns continue on the RIGHT page.
+Read across the center binding/gutter. Treat it as ONE table, not two separate tables.
+
+Typical layout of an Indian bank register (left page + right page):
+LEFT PAGE columns:  S.No | Name | Father Name | Designation | Account Holder Name | Account No
+RIGHT PAGE columns: IFSC Code | Bank Name | Branch
+
+Count ALL data rows by scanning down the Name or Account No columns on the LEFT page.
+CRITICAL: Do NOT rely on the S.No column to count rows, as the serial numbers may be cut off, blank, or missing for the bottom rows. If there is data in the Name or Account No columns, it is a valid row.
+Common row counts: 20-30 rows per page.
+
+Respond with ONLY valid JSON (no markdown, no explanation). Use this exact format:
+{
+  "num_rows": <integer count of DATA rows, not counting header>,
+  "num_cols": <integer count of ALL columns across both pages>,
+  "headers": ["col1", "col2", ...],
+  "is_two_page_spread": <true if the image shows two pages>,
+  "notes": "<brief description>"
+}
+"""
+
+
+# ── Pass 2: JSON data extraction prompt ───────────────────────────────────
+JSON_EXTRACTION_SYSTEM_PROMPT = """You extract data from HANDWRITTEN table images into structured JSON.
+
+CRITICAL: The image may show an OPEN REGISTER (two pages side-by-side).
+If so, each row spans BOTH pages — read left-to-right across the center gutter/binding.
+The left page and right page contain columns of the SAME table.
+
+CRITICAL RULES:
+1. Respond with ONLY valid JSON. No markdown, no backticks, no explanation.
+2. Output format: {"rows": [[row1_values...], [row2_values...], ...]}
+3. Do NOT include the header row in "rows" — only data rows.
+4. Use null for empty/unreadable cells.
+5. Use strings for all values (names, numbers, codes).
+6. Each row must have the SAME number of values matching the column count.
+
+DOMAIN KNOWLEDGE FOR INDIAN BANK REGISTERS:
+- Column order (typical): S.No, Name, Father Name, Designation, Account Holder,
+  Account No, IFSC Code, Bank Name, Branch
+- IFSC codes: 4 uppercase letters + "0" + 6 alphanumeric chars (e.g., IDIB0000501, BKID0006929)
+- Account numbers: numeric only, 8-15 digits. Strip leading dots.
+- Bank names: INDIAN BANK, BANK OF INDIA, UNION BANK OF INDIA, BANK OF BARODA,
+  PUNJAB NATIONAL BANK, FINO PAYMENTS BANK, AIRTEL PAYMENTS BANK, INDIA POST
+- Designation: usually "G.N.M." or "G.N.L."
+- Serial numbers (S.No): sequential integers 1, 2, 3...
+- Names: Hindi names in English (Ram, Shiv, Fathe Singh, Om Prakash, Jagdish, etc.)
+- Branch names: Indian town/city names (e.g., OBRA, ANPARA, CHOPAN, KAJARHAT)
+
+HANDWRITING DISAMBIGUATION:
+- Name fields: prefer letters (l not 1, O not 0, S not 5)
+- Number fields: prefer digits (0 not O, 1 not l, 5 not S)
+- Common confusions: 1/l/I, 0/O/Q, 5/S, 2/Z, 6/G, 8/B, 9/g
+"""
+
+
+# ── Extraction prompt template (used by agent for each strip/full image) ──
+def make_json_extraction_prompt(headers: list[str] | None = None,
+                                 expected_rows: int | None = None,
+                                 strip_label: str = "",
+                                 extra_context: str = "") -> str:
+    """Build the user-message prompt for JSON table extraction.
+
+    Args:
+        headers: Known column headers from Pass 1 (if available).
+        expected_rows: Expected number of data rows in this strip.
+        strip_label: e.g. "top", "middle", "bottom" for strip-based extraction.
+        extra_context: Any additional instructions.
+    """
+    parts = [
+        "Extract ALL data rows from this handwritten table image.\n",
+        "IMPORTANT: If this is an open register/book, read ACROSS both pages. "
+        "Each data row starts on the left page and continues on the right page.\n",
+    ]
+
+    if headers:
+        import json as _json
+        parts.append(
+            f"The table has exactly {len(headers)} columns in this order:\n"
+            f"{_json.dumps(headers)}\n"
+            f"Map each cell value to its corresponding column. Do NOT add, remove, or reorder columns.\n"
+        )
+
+    if expected_rows:
+        parts.append(
+            f"There should be approximately {expected_rows} data rows. "
+            f"Extract every single one — missing a row is a failure.\n"
+        )
+
+    if strip_label:
+        parts.append(
+            f"This is the {strip_label} portion of the table. "
+            f"Extract only the rows visible in this portion.\n"
+        )
+
+    parts.append(
+        'Respond with ONLY a JSON object: {"rows": [[val1, val2, ...], ...]}\n'
+        "Every value must be a string or null. No integers, no floats.\n"
+    )
+
+    if extra_context:
+        parts.append(extra_context)
+
+    return "\n".join(parts)
+
+
 ANALYSIS_SYSTEM_PROMPT = """
 You are an Excel data analysis AI. You analyze data in Excel workbooks using Python xlwings.
 

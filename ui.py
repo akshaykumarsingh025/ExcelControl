@@ -211,6 +211,17 @@ class ExcelAIApp:
 
         tk.Button(
             btn_frame,
+            text="Img\u2192Sheet",
+            command=self._import_image,
+            bg="#f9e2af",
+            fg="#1e1e2e",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=4,
+        ).pack(side="left", padx=2)
+
+        tk.Button(
+            btn_frame,
             text="Clear",
             command=self._clear_chat,
             bg="#45475a",
@@ -338,6 +349,7 @@ class ExcelAIApp:
         section_font = ("Segoe UI", 11, "bold")
         label_font = ("Segoe UI", 9)
 
+        # ── Model Selection ──
         tk.Label(
             scrollable,
             text="Model Selection",
@@ -411,6 +423,43 @@ class ExcelAIApp:
             font=label_font,
             relief="flat",
         ).grid(row=row, column=0, columnspan=2, padx=8, pady=2, sticky="ew")
+        row += 1
+
+        tk.Frame(scrollable, bg="#45475a", height=1).grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=8
+        )
+        row += 1
+
+        # ── Image to Sheet ──
+        tk.Label(
+            scrollable,
+            text="Image to Sheet",
+            font=section_font,
+            bg="#1e1e2e",
+            fg="#cdd6f4",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(4, 4))
+        row += 1
+
+        tk.Label(
+            scrollable,
+            text="Select an image of a table (handwritten or printed)\nand add its data directly to the active sheet.",
+            font=("Segoe UI", 8),
+            bg="#1e1e2e",
+            fg="#6c7086",
+            justify="left",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4))
+        row += 1
+
+        tk.Button(
+            scrollable,
+            text="Import Image & Add to Sheet",
+            command=self._import_image,
+            bg="#f9e2af",
+            fg="#1e1e2e",
+            font=label_font,
+            relief="flat",
+            pady=4,
+        ).grid(row=row, column=0, columnspan=2, padx=8, pady=4, sticky="ew")
         row += 1
 
         tk.Frame(scrollable, bg="#45475a", height=1).grid(
@@ -867,6 +916,11 @@ class ExcelAIApp:
                 if msg_type == "ai_done":
                     self.entry.config(state="normal")
                     self._handle_ai_response(cmd=arg1, code=arg2)
+                elif msg_type == "image_done":
+                    self._handle_image_response(path=arg1, code=arg2)
+                elif msg_type == "image_error":
+                    self.entry.config(state="normal")
+                    self._log("error", f"Image processing error: {arg1}\n")
                 elif msg_type == "ai_error":
                     self.entry.config(state="normal")
                     self._log("error", f"Error connecting to AI: {arg1}\n")
@@ -925,6 +979,36 @@ class ExcelAIApp:
             self.editor.delete("1.0", tk.END)
             self.editor.insert("1.0", code)
             self.current_cmd = cmd
+
+    def _handle_image_response(self, path, code):
+        self._log("ai", "AI Generated Code from Image:\n")
+        self._log("code", f"{code}\n")
+
+        if code.startswith("# ERROR"):
+            self._log("error", f"{code}\n")
+            return
+
+        if self.dry_run_var.get():
+            self._log("dryrun", "DRY RUN - Image extraction preview:\n")
+            validation = validate_code(code)
+            if not validation.is_safe:
+                self._log("error", "Code blocked:\n" + "\n".join(validation.issues) + "\n")
+                return
+            result = analyze_code(code)
+            self._log("dryrun", result.summary() + "\n")
+            self.editor.delete("1.0", tk.END)
+            self.editor.insert("1.0", code)
+            self._log("system", "Code sent to editor. Uncheck Dry-Run and execute to apply.\n")
+            return
+
+        if self.auto_run_var.get():
+            self._log("system", "Writing data to sheet...\n")
+            self._execute_code(f"Image: {path}", code)
+        else:
+            self._log("system", "Image data code sent to Code Editor for review.\n")
+            self.editor.delete("1.0", tk.END)
+            self.editor.insert("1.0", code)
+            self.current_cmd = f"Image: {path}"
 
     def _execute_code(self, cmd, code):
         success, result = self.excel.execute(code)
@@ -1012,10 +1096,53 @@ class ExcelAIApp:
         self.model_combo["values"] = models
         if self.model_var.get() not in models and models:
             self.model_var.set(models[0])
+            self.agent.set_model(models[0])
 
     def _on_model_change(self, event=None):
         self.agent.set_model(self.model_var.get())
         self._log("system", f"Model switched to: {self.model_var.get()}\n")
+
+    # ================================================================
+    # IMPORT IMAGE → SHEET
+    # ================================================================
+    def _import_image(self):
+        path = filedialog.askopenfilename(
+            title="Select an image with a table",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+
+        if not self.excel.is_connected():
+            self._log("error", "Connect to Excel first using the buttons above.\n")
+            return
+
+        model = self.model_var.get()
+        is_vision = any(v in model.lower() for v in ["vision", "gemma3", "gemma4", "llava", "moondream", "minicpm", "glm"])
+        if not is_vision:
+            self._log(
+                "system",
+                f"WARNING: '{model}' may not support vision. "
+                "Switch to a vision model (e.g. gemma3-vision, llama3.2-vision) if this fails.\n",
+            )
+
+        self._log("user", f"\n[Importing image: {path.split('/')[-1].split(chr(92))[-1]}]\n")
+        self._log("system", "Analyzing image with AI... (this may take a moment)\n")
+
+        threading.Thread(
+            target=self._image_worker, args=(path,), daemon=True
+        ).start()
+
+    def _image_worker(self, path):
+        try:
+            # Use the improved JSON extraction pipeline by default
+            code = self.agent.ask_with_image_json(path)
+            self.q.put(("image_done", path, code))
+        except Exception as e:
+            self.q.put(("image_error", str(e), ""))
 
     # ================================================================
     # SHEET SWITCHER
