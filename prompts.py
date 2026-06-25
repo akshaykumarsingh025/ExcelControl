@@ -14,6 +14,7 @@ RULES:
 8. CRITICAL: To write VERTICALLY down a single column (e.g., A1, A2, A3), you MUST use a nested 2D list: [[1], [2], [3]].
 9. To apply a formula to an entire column range, just assign it: ws.range("F2:F11").formula = "=E2*0.18"
 10. If the user provides "CURRENT SHEET CONTEXT", use it to understand existing data and column positions, but do NOT rewrite data that is already there.
+11. You may import: json, math, datetime, re, collections, statistics, time, random
 
 === CELL WRITE / READ ===
 - ws["A1"].value = "text"                      -> Write text to cell
@@ -43,280 +44,47 @@ RULES:
 - ws.range("A1:D10").api.Borders(1).LineStyle = 1   -> Left border (1=xlEdgeLeft, 2=xlEdgeRight, 3=xlEdgeTop, 4=xlEdgeBottom, 5=xlInsideVertical, 6=xlInsideHorizontal)
 - ws.range("A1:D10").api.Borders(1).Weight = 2       -> Border weight (1=thin, 2=medium, 3=thick)
 - ws.range("A1:D10").api.Borders(1).Color = 0        -> Border color (VB: R+G*256+B*65536)
-- Example - full borders on a range:
-  for i in range(1, 7):
-      ws.range("A1:D10").api.Borders(i).LineStyle = 1
-      ws.range("A1:D10").api.Borders(i).Weight = 2
 
 === FORMATTING: ALIGNMENT (via COM API) ===
-- ws.range("A1").api.HorizontalAlignment = -4108    -> Center align (-4108=xlCenter, -4131=xlLeft, -4152=xlRight)
-- ws.range("A1").api.VerticalAlignment = -4108      -> Vertical center (-4108=xlCenter, -4160=xlTop, -4107=xlBottom)
-- ws.range("A1").api.WrapText = True                -> Wrap text in cell
-- ws.range("A1").wrap_text = True                    -> Wrap text (xlwings native)
+- ws.range("A1").api.HorizontalAlignment = -4108    -> Center align
+- ws.range("A1").api.VerticalAlignment = -4108      -> Vertical center
+- ws.range("A1").api.WrapText = True                -> Wrap text
 
 === FORMATTING: ROW HEIGHT / COLUMN WIDTH ===
 - ws["A1"].column_width = 20                   -> Set column width
 - ws["A1"].row_height = 30                     -> Set row height
 - ws.range("A1:C1").autofit()                  -> Autofit columns
-- ws.range("A1:A5").autofit()                  -> Autofit rows
-- ws.autofit("c")                              -> Autofit all columns on sheet
-- ws.autofit("r")                              -> Autofit all rows on sheet
 - ws.autofit()                                 -> Autofit everything
 
 === NUMBER FORMATS ===
 - ws["A1"].number_format = "$#,##0.00"         -> Currency
 - ws["A1"].number_format = "0.00%"             -> Percentage
 - ws["A1"].number_format = "#,##0"             -> Number with comma separator
-- ws["A1"].number_format = "0.00"              -> 2 decimal places
-- ws["A1"].number_format = "MM/DD/YYYY"        -> Date format
-- ws["A1"].number_format = "HH:MM:SS"          -> Time format
-- ws["A1"].number_format = "@"                  -> Text format
-- ws["A1"].number_format = "General"            -> General (default)
 
 === FORMULAS ===
 - ws["A1"].formula = "=SUM(B1:B10)"            -> Insert formula
-- ws["A1"].formula2 = "=SORT(A1:A10)"          -> Insert dynamic array formula (Excel 365)
-- ws.range("A1:C1").formula_array = "=..."     -> Insert CSE array formula
-- ws.range("D2:D10").formula = "=B2*C2"        -> Apply formula to entire range
+- ws.range("D2:D10").formula = "=B2*C2"        -> Apply formula to range
 
-=== MERGE / UNMERGE CELLS ===
+=== MERGE / UNMERGE ===
 - ws.range("A1:D1").merge()                    -> Merge cells
-- ws.range("A1:D1").merge(across=True)         -> Merge each row separately
 - ws.range("A1:D1").unmerge()                  -> Unmerge cells
-- ws.range("A1").merge_cells                   -> Check if cell is merged (returns bool)
-- ws.range("A1").merge_area                    -> Get the merged range containing cell
 
 === CHART GENERATION ===
-- CRITICAL: Charts are added to SHEETS not workbooks. ALWAYS use ws.charts.add() NEVER wb.charts.add()
-- CRITICAL: ws.charts.add() takes ONLY left, top, width, height as positional args. Do NOT pass chart_type as first arg.
-- chart = ws.charts.add(left, top, width, height)  -> Create empty chart on current sheet
+- chart = ws.charts.add(left, top, width, height)  -> Create empty chart
 - chart.set_source_data(ws.range("A1:C13"))     -> Set chart data source
 - chart.chart_type = "bar_clustered"             -> Set chart type AFTER creating
-- CRITICAL: chart_type values use underscores, NOT "bar_chart". Correct types:
-  bar_clustered, bar_stacked, column_clustered, column_stacked, line, line_markers,
-  pie, pie_exploded, area, area_stacked, doughnut, xy_scatter, bubble,
-  3d_bar_clustered, 3d_column_clustered, 3d_pie, 3d_line, radar, radar_markers,
-  line_stacked, combination, surface, stock_hlc
-- chart.name = "My Chart"                        -> Name the chart
-- Example: chart = ws.charts.add(200, 10, 400, 300); chart.set_source_data(ws.range("A1:C13")); chart.chart_type = "bar_clustered"
-- WRONG: wb.charts.add()  -> AttributeError
-- WRONG: ws.charts.add("bar_clustered", ...)  -> chart_type is NOT a parameter of add()
-- WRONG: chart.chart_type = "bar_chart"  -> invalid type, use "bar_clustered" or "column_clustered"
 
-=== CONDITIONAL FORMATTING ===
-- Use xlwings with COM API for conditional formatting:
-- ws.range("B2:B10").api.FormatConditions.Add(Type=1, Operator=5, Formula1="1000")  -> Highlight cells > 1000
-- ws.range("B2:B10").api.FormatConditions(1).Interior.Color = 255                   -> Red background (VB color: R+G*256+B*65536)
-- Operators: 1=between, 2=not between, 3=equal, 4=not equal, 5=greater than, 6=less than, 7=greater equal, 8=less equal
-- Types: 1=cell value, 2=expression
-- For color scale (3-color): ws.range("A1:A10").api.FormatConditions.AddColorScale(3)
-  ws.range("A1:A10").api.FormatConditions(1).ColorScaleCriteria(1).Type = 2  -> min
-  ws.range("A1:A10").api.FormatConditions(1).ColorScaleCriteria(1).FormatColor.Color = 8109667
-  ws.range("A1:A10").api.FormatConditions(1).ColorScaleCriteria(2).Type = 4  -> percentile 50
-  ws.range("A1:A10").api.FormatConditions(1).ColorScaleCriteria(3).Type = 3  -> max
-- For data bars: ws.range("A1:A10").api.FormatConditions.AddDatabar()
-- To delete all conditional formatting: ws.range("A1:A10").api.FormatConditions.Delete()
-
-=== TABLES (Excel Tables / ListObjects) ===
-- ws.tables.add(source=ws.range("A1:D10"), name="SalesTable")  -> Create an Excel Table
-- ws.tables.add(source=ws.range("A1:D10"), name="DataTable").table_style = "TableStyleMedium9"  -> With style
-- Table styles: TableStyleLight1-21, TableStyleMedium1-28, TableStyleDark1-11
-- ws.tables["TableName"].show_autofilter = True/False    -> Toggle autofilter
-- ws.tables["TableName"].show_totals = True              -> Show total row
-- ws.tables["TableName"].table_style = "TableStyleMedium2" -> Change style
-- ws.tables["TableName"].show_table_style_row_stripes = True -> Row stripes
-- ws.tables["TableName"].show_table_style_column_stripes = True -> Column stripes
-- ws.tables["TableName"].data_body_range             -> Get data range (excl. header)
-- ws.tables["TableName"].header_row_range            -> Get header row range
-- ws.tables["TableName"].resize(ws.range("A1:E20"))  -> Resize table
-- [t.name for t in ws.tables]                         -> List all tables on sheet
-
-=== HYPERLINKS ===
-- ws.range("A1").add_hyperlink("https://example.com", "Click Here", "Go to example")  -> Add hyperlink
-- url = ws.range("A1").hyperlink                      -> Read hyperlink URL
-
-=== PICTURES / IMAGES ===
-- ws.pictures.add("C:/path/to/image.png")             -> Insert image
-- ws.pictures.add("C:/path/to/image.png", left=100, top=50, width=200, height=150)  -> With position/size
-- pic = ws.pictures.add("image.png"); pic.name = "Logo"  -> Name a picture
-- pic.left = 100; pic.top = 50                        -> Reposition picture
-- [p.name for p in ws.pictures]                       -> List all pictures
-
-=== SHEET OPERATIONS ===
-- wb.sheets.add("NewSheet")                           -> Add new sheet (at end)
-- wb.sheets.add("NewSheet", before=wb.sheets[0])      -> Add before first sheet
-- wb.sheets.add("NewSheet", after=wb.sheets[-1])      -> Add after last sheet
-- wb.sheets["Sheet1"].delete()                         -> Delete sheet
-- ws.name = "New Name"                                -> Rename sheet
-- wb.sheets.count                                      -> Count sheets
-- wb.sheets.active                                     -> Get active sheet
-- ws.activate()                                        -> Activate sheet
-- ws.visible = True/False                              -> Show/hide sheet
-- ws.copy(name="CopyOfSheet")                          -> Copy sheet
-- ws.copy(after=other_wb.sheets[0])                    -> Copy to another workbook
-- ws.clear()                                           -> Clear content + formatting
-- ws.clear_contents()                                  -> Clear content only
-- ws.clear_formats()                                   -> Clear formatting only
-- wb.sheet_names                                       -> List all sheet names
+=== TABLES ===
+- ws.tables.add(source=ws.range("A1:D10"), name="SalesTable")  -> Create Excel Table
 
 === FREEZE PANES ===
-- ws.freeze_panes.freeze_at("B2")                     -> Freeze rows above and cols left of B2
-- ws.freeze_panes.freeze_at("A2")                     -> Freeze top row only
-- ws.freeze_panes.freeze_at("B1")                     -> Freeze first column only
-- ws.freeze_panes.unfreeze()                          -> Remove freeze panes
+- ws.freeze_panes.freeze_at("A2")                     -> Freeze top row
 
-=== PAGE SETUP / PRINT ===
-- ws.page_setup.print_area = "$A$1:$D$20"             -> Set print area
-- ws.page_setup.print_area = None                      -> Clear print area
-- ws.to_pdf()                                          -> Export sheet to PDF
-- ws.to_pdf("C:/path/output.pdf")                      -> Export with specific path
-- ws.to_pdf(show=True)                                 -> Export and open PDF
-- wb.to_pdf()                                          -> Export entire workbook to PDF
-- wb.to_pdf(include=["Sheet1", "Sheet3"])              -> Export specific sheets
-- wb.to_pdf(exclude="Sheet2")                          -> Exclude specific sheets
-
-=== CELL INSERT / DELETE ===
-- ws.range("A1:D10").insert(shift="down")              -> Insert cells, shift existing down
-- ws.range("A1:D10").insert(shift="right")             -> Insert cells, shift existing right
-- ws.range("A1:D10").delete(shift="up")                -> Delete cells, shift up
-- ws.range("A1:D10").delete(shift="left")              -> Delete cells, shift left
-
-=== COPY / PASTE ===
-- ws.range("A1:C3").copy(ws.range("E1"))              -> Copy range to destination
-- ws.range("A1:C3").copy()                             -> Copy to clipboard
-- ws.range("E1").paste(paste="values")                 -> Paste values only
-- ws.range("E1").paste(paste="formats")                 -> Paste formats only
-- ws.range("E1").paste(paste="formulas")                -> Paste formulas only
-- ws.range("E1").paste(transpose=True)                  -> Paste transposed
-- Paste types: "all", "values", "formats", "formulas", "values_and_number_formats", "formulas_and_number_formats"
-- ws.range("E1").copy_from(ws.range("A1:C3"))           -> Copy from source (newer method)
-- ws.range("E1").copy_from(ws.range("A1:C3"), copy_type="values", transpose=True) -> Copy values transposed
-
-=== AUTOFILL ===
-- ws.range("A1:A2").autofill(ws.range("A1:A10"), "fill_series")   -> Autofill series
-- ws.range("A1:A2").autofill(ws.range("A1:A10"), "fill_default")  -> Autofill default
-- Fill types: fill_copy, fill_days, fill_default, fill_formats, fill_months, fill_series, fill_values, fill_weekdays, fill_years, growth_trend, linear_trend, flash_fill
-
-=== RANGE NAVIGATION ===
-- ws.range("A1").end("down")                          -> Go to end of region (like Ctrl+Down)
-- ws.range("A1").end("up")                            -> Go to end (like Ctrl+Up)
-- ws.range("A1").end("right")                         -> Go to end (like Ctrl+Right)
-- ws.range("A1").end("left")                          -> Go to end (like Ctrl+Left)
-- ws.range("A1").offset(2, 3)                         -> Range offset by rows/cols
-- ws.range("A1:C3").resize(row_size=5, column_size=4) -> Resize range
-- ws.range("A1").current_region                       -> Get contiguous data region (Ctrl+*)
-- ws.used_range                                        -> Get entire used range of sheet
-- ws.range("A1").last_cell                            -> Bottom-right cell of range
-- ws.range("A1").select()                             -> Select a range
-- cell_row = ws.range("A1").row                       -> Get row number
-- cell_col = ws.range("A1").column                    -> Get column number
-- ws.range("A1").shape                                -> Get (rows, cols) tuple
-- ws.range("A1").count                                -> Count cells in range
-
-=== NAMED RANGES ===
-- ws.range("A1:D10").name = "MyData"                  -> Create named range
-- wb.names["MyData"].refers_to_range                   -> Get named range
-- [n.name for n in wb.names]                           -> List all named ranges
-
-=== NOTES / COMMENTS ===
-- ws.range("A1").note.text = "This is a note"         -> Add note (old-style comment)
-- ws.range("A1").note.text                             -> Read note text
-- ws.range("A1").note.delete()                         -> Delete note
-
-=== CROSS-FILE / MULTI-BOOK OPERATIONS ===
-- other_wb = xw.books.open("path/to/file.xlsx")       -> Open another workbook
-- other_ws = other_wb.sheets["Sheet1"]                 -> Reference sheet in other book
-- data = other_ws.range("A1:D10").value                -> Read from other workbook
-- ws.range("A1:D10").value = other_ws.range("A1:D10").value -> Copy data between workbooks
-- [b.name for b in xw.books]                          -> List all open workbooks
-- wb.save("C:/path/new_name.xlsx")                     -> Save As with different name/extension
-- wb.macro("Module1.MyMacro")(arg1, arg2)              -> Call VBA macro
-
-=== GROUPING / OUTLINE ===
-- ws.range("2:5").group()                              -> Group rows 2-5
-- ws.range("A:C").group()                              -> Group columns A-C
-- ws.range("2:5").ungroup()                            -> Ungroup rows
-- ws.api.Outline.ShowLevels(1)                         -> Collapse to level 1
-- ws.api.Outline.ShowLevels(2)                         -> Expand to level 2
-
-=== ROW/COLUMN VISIBILITY ===
-- ws.api.Rows("3:5").Hidden = True                     -> Hide rows 3-5
-- ws.api.Rows("3:5").Hidden = False                    -> Unhide rows
-- ws.api.Columns("C:E").Hidden = True                  -> Hide columns C-E
-- ws.api.Columns("C:E").Hidden = False                 -> Unhide columns
-
-=== SORT (via COM API) ===
-- ws.range("A1:D10").api.Sort(Key1=ws.range("A1").api, Order1=1)  -> Sort ascending by col A (1=xlAscending, 2=xlDescending)
-- ws.range("A1:D10").api.Sort(Key1=ws.range("B1").api, Order1=2, Key2=ws.range("C1").api, Order2=1)  -> Sort by B desc, then C asc
-
-=== FIND / REPLACE (via COM API) ===
-- found = ws.range("A1:D10").api.Find("search text")   -> Find text
-- ws.range("A1:D10").api.Replace("old", "new")          -> Replace text
-
-=== DATA VALIDATION (via COM API) ===
-- ws.range("B2:B10").api.Validation.Add(Type=3, Formula1="Yes,No") -> Dropdown list (Type=3=list)
-- ws.range("B2:B10").api.Validation.Add(Type=1, Formula1="10", Formula2="100") -> Whole number between 10 and 100 (Type=1=whole, Type=2=decimal, Type=4=textLength)
-- ws.range("B2:B10").api.Validation.Add(Type=5, Formula1="=Sheet1!$A$1:$A$5") -> List from range (Type=5=formula)
-- ws.range("B2:B10").api.Validation.IgnoreBlank = True
-- ws.range("B2:B10").api.Validation.InCellDropdown = True
-- ws.range("B2:B10").api.Validation.Delete()            -> Remove validation
-
-=== EXPORT ===
-- ws.to_pdf()                                          -> Export sheet as PDF
-- ws.to_html()                                         -> Export sheet as HTML
-- ws.range("A1:D10").to_png()                          -> Export range as PNG image
-- ws.range("A1:D10").to_pdf()                          -> Export range as PDF
-- chart.to_png("chart.png")                            -> Export chart as PNG
-- chart.to_pdf("chart.pdf")                            -> Export chart as PDF
-
-=== PROTECTION (via COM API) ===
-- ws.api.Protect(Password="pass123")                   -> Protect sheet with password
-- ws.api.Unprotect(Password="pass123")                  -> Unprotect sheet
-- wb.api.Protect(Password="pass123")                    -> Protect workbook
-- wb.api.Unprotect(Password="pass123")                  -> Unprotect workbook
-
-=== EXAMPLES ===
-
-EXAMPLE TASK: "Put Name, Age as headers, add 2 people, and make a vertical Salary column"
+=== EXAMPLE ===
+EXAMPLE TASK: "Put Name, Age as headers, add 2 people"
 EXAMPLE OUTPUT:
 ws.range("A1:B1").value = ["Name", "Age"]
 ws.range("A2:B3").value = [["Alice", 30], ["Bob", 25]]
-ws.range("C1").value = "Salary"
-ws.range("C2:C3").value = [[50000], [60000]]
-
-EXAMPLE TASK: "Create a bar chart from the data in A1:C13"
-EXAMPLE OUTPUT:
-chart = ws.charts.add(200, 10, 400, 300)
-chart.set_source_data(ws.range("A1:C13"))
-chart.chart_type = "bar_clustered"
-
-EXAMPLE TASK: "Highlight all cells greater than 1000 in column B with red background"
-EXAMPLE OUTPUT:
-ws.range("B2:B100").api.FormatConditions.Add(Type=1, Operator=5, Formula1="1000")
-ws.range("B2:B100").api.FormatConditions(1).Interior.Color = 255
-
-EXAMPLE TASK: "Create an Excel table from A1:D10 with blue style"
-EXAMPLE OUTPUT:
-ws.tables.add(source=ws.range("A1:D10"), name="DataTable").table_style = "TableStyleMedium2"
-
-EXAMPLE TASK: "Freeze the top row"
-EXAMPLE OUTPUT:
-ws.freeze_panes.freeze_at("A2")
-
-EXAMPLE TASK: "Add borders around A1:D10"
-EXAMPLE OUTPUT:
-for i in range(1, 7):
-    ws.range("A1:D10").api.Borders(i).LineStyle = 1
-    ws.range("A1:D10").api.Borders(i).Weight = 2
-
-EXAMPLE TASK: "Add a dropdown list in B2:B10 with options Yes, No"
-EXAMPLE OUTPUT:
-ws.range("B2:B10").api.Validation.Add(Type=3, Formula1="Yes,No")
-ws.range("B2:B10").api.Validation.InCellDropdown = True
-
-EXAMPLE TASK: "Add hyperlink in A1 to https://example.com"
-EXAMPLE OUTPUT:
-ws.range("A1").add_hyperlink("https://example.com", "Click Here", "Go to example")
 """
 
 VISION_SYSTEM_PROMPT = """
@@ -332,58 +100,49 @@ RULES:
 4. Never import xlwings.
 5. Never call wb.save() or wb.close().
 6. NUMBERS MUST BE EXACT — account numbers, amounts, IDs — every digit matters.
-7. NAMES MUST BE CORRECT — spell bank names, people, places exactly as written.
+7. NAMES MUST BE CORRECT — spell names, people, places exactly as written.
 8. Empty cells = None.
-9. Mixed content like "A/C 12345" — preserve both parts exactly.
-10. In xlwings, a 1D list writes horizontally. Use nested 2D lists for rows.
-11. Count ALL rows carefully before writing code. Write the count as a comment at the top.
-12. Identify the exact column headers as written. Do NOT merge columns, do NOT split columns. Preserve the column order as seen in the image.
+9. In xlwings, a 1D list writes horizontally. Use nested 2D lists for rows.
+10. Count ALL rows carefully before writing code. Write the count as a comment at the top.
+11. Identify the exact column headers as written. Do NOT merge or split columns. Preserve the column order.
 
 HANDWRITTEN TEXT RULES:
 - Handwriting can be messy — use context to resolve ambiguity:
   * In name fields: letters are more likely than numbers (e.g. 'l' not '1', 'O' not '0')
   * In amount/number fields: numbers are more likely (e.g. '0' not 'O')
-  * S.No (serial number) column: should be sequential integers 1, 2, 3...
+  * Serial number column: should be sequential integers 1, 2, 3...
 - Common handwritten confusions: 1 vs l vs I, 0 vs O vs Q, 5 vs S, 2 vs Z
 - Preserve spacing and casing as written
-- If a word is partially illegible, use your best interpretation based on context
 - Row alignment may be imperfect — rows may be slightly tilted or unevenly spaced
-- Cell boundaries may not be perfectly defined — use column alignment to determine columns
 """
 
 
-# ── Pass 1: Structure detection prompt ────────────────────────────────────
-STRUCTURE_ANALYSIS_PROMPT = """You are analyzing a HANDWRITTEN table image to identify its structure.
+# ── Pass 1: Structure detection ────────────────────────────────────────────
+STRUCTURE_ANALYSIS_PROMPT = """You are analyzing a table image to identify its structure.
 
 CRITICAL: This image may show an OPEN REGISTER or BOOK with TWO PAGES side by side.
-If so, the table spans BOTH pages continuously — the LEFT page columns continue on the RIGHT page.
+If so, the table spans BOTH pages — the LEFT page columns continue on the RIGHT page.
 Read across the center binding/gutter. Treat it as ONE table, not two separate tables.
 
-Typical layout of an Indian bank register (left page + right page):
-LEFT PAGE columns:  S.No | Name | Father Name | Designation | Account Holder Name | Account No
-RIGHT PAGE columns: IFSC Code | Bank Name | Branch
-
-Count ALL data rows by scanning down the Name or Account No columns on the LEFT page.
-CRITICAL: Do NOT rely on the S.No column to count rows, as the serial numbers may be cut off, blank, or missing for the bottom rows. If there is data in the Name or Account No columns, it is a valid row.
-Common row counts: 20-30 rows per page.
+Count ALL data rows by scanning the leftmost data columns.
+Do NOT rely on serial number columns to count rows, as they may be cut off or missing.
 
 Respond with ONLY valid JSON (no markdown, no explanation). Use this exact format:
 {
   "num_rows": <integer count of DATA rows, not counting header>,
   "num_cols": <integer count of ALL columns across both pages>,
   "headers": ["col1", "col2", ...],
-  "is_two_page_spread": <true if the image shows two pages>,
+  "is_two_page_spread": <true if the image shows two pages side by side>,
   "notes": "<brief description>"
 }
 """
 
 
-# ── Pass 2: JSON data extraction prompt ───────────────────────────────────
-JSON_EXTRACTION_SYSTEM_PROMPT = """You extract data from HANDWRITTEN table images into structured JSON.
+# ── Pass 2: JSON data extraction ──────────────────────────────────────────
+JSON_EXTRACTION_SYSTEM_PROMPT = """You extract data from table images into structured JSON.
 
 CRITICAL: The image may show an OPEN REGISTER (two pages side-by-side).
 If so, each row spans BOTH pages — read left-to-right across the center gutter/binding.
-The left page and right page contain columns of the SAME table.
 
 CRITICAL RULES:
 1. Respond with ONLY valid JSON. No markdown, no backticks, no explanation.
@@ -392,43 +151,22 @@ CRITICAL RULES:
 4. Use null for empty/unreadable cells.
 5. Use strings for all values (names, numbers, codes).
 6. Each row must have the SAME number of values matching the column count.
-
-DOMAIN KNOWLEDGE FOR INDIAN BANK REGISTERS:
-- Column order (typical): S.No, Name, Father Name, Designation, Account Holder,
-  Account No, IFSC Code, Bank Name, Branch
-- IFSC codes: 4 uppercase letters + "0" + 6 alphanumeric chars (e.g., IDIB0000501, BKID0006929)
-- Account numbers: numeric only, 8-15 digits. Strip leading dots.
-- Bank names: INDIAN BANK, BANK OF INDIA, UNION BANK OF INDIA, BANK OF BARODA,
-  PUNJAB NATIONAL BANK, FINO PAYMENTS BANK, AIRTEL PAYMENTS BANK, INDIA POST
-- Designation: usually "G.N.M." or "G.N.L."
-- Serial numbers (S.No): sequential integers 1, 2, 3...
-- Names: Hindi names in English (Ram, Shiv, Fathe Singh, Om Prakash, Jagdish, etc.)
-- Branch names: Indian town/city names (e.g., OBRA, ANPARA, CHOPAN, KAJARHAT)
+7. Extract EVERY row visible in the image. Missing a row is a failure.
 
 HANDWRITING DISAMBIGUATION:
-- Name fields: prefer letters (l not 1, O not 0, S not 5)
+- Name/text fields: prefer letters (l not 1, O not 0, S not 5)
 - Number fields: prefer digits (0 not O, 1 not l, 5 not S)
 - Common confusions: 1/l/I, 0/O/Q, 5/S, 2/Z, 6/G, 8/B, 9/g
 """
 
 
-# ── Extraction prompt template (used by agent for each strip/full image) ──
+# ── Extraction prompt for full image or strips ────────────────────────────
 def make_json_extraction_prompt(headers: list[str] | None = None,
                                  expected_rows: int | None = None,
                                  strip_label: str = "",
                                  extra_context: str = "") -> str:
-    """Build the user-message prompt for JSON table extraction.
-
-    Args:
-        headers: Known column headers from Pass 1 (if available).
-        expected_rows: Expected number of data rows in this strip.
-        strip_label: e.g. "top", "middle", "bottom" for strip-based extraction.
-        extra_context: Any additional instructions.
-    """
     parts = [
-        "Extract ALL data rows from this handwritten table image.\n",
-        "IMPORTANT: If this is an open register/book, read ACROSS both pages. "
-        "Each data row starts on the left page and continues on the right page.\n",
+        "Extract ALL data rows from this table image.\n",
     ]
 
     if headers:
@@ -462,6 +200,58 @@ def make_json_extraction_prompt(headers: list[str] | None = None,
     return "\n".join(parts)
 
 
+# ── Right-half extraction prompt (for two-page spreads) ────────────────────
+def make_right_half_extraction_prompt(headers: list[str] | None = None,
+                                       expected_rows: int | None = None,
+                                       strip_label: str = "") -> str:
+    """Build prompt for extracting data from the RIGHT half of a two-page spread.
+
+    The right half only shows right-side columns plus possibly a serial number
+    near the gutter. The prompt tells the LLM to focus on these columns only.
+    """
+    parts = [
+        "This image shows the RIGHT SIDE of an open register/book. "
+        "The LEFT EDGE of this image is near the center gutter/binding.\n",
+    ]
+
+    if headers:
+        import json as _json
+        parts.append(
+            f"The visible columns in this image are exactly {len(headers)} in this order:\n"
+            f"{_json.dumps(headers)}\n"
+            f"Map each cell value to its corresponding column. Do NOT add, remove, or reorder columns.\n"
+        )
+
+    parts.append(
+        "CRITICAL INSTRUCTIONS for reading the right side:\n"
+        "- The first column (S.No or serial number) may be partially visible near the LEFT edge "
+        "of the image, close to the gutter. Read whatever digits you can. "
+        "If completely unreadable, use null.\n"
+        "- For all other columns, read the data carefully for EVERY row.\n"
+        "- Do NOT skip any row. Even if a number is short (4-6 digits), it is still valid data.\n"
+        "- Do NOT invent or guess data that is not visible. Use null for truly empty cells.\n"
+    )
+
+    if expected_rows:
+        parts.append(
+            f"There should be approximately {expected_rows} data rows. "
+            f"Extract every single one — missing a row is a failure.\n"
+        )
+
+    if strip_label:
+        parts.append(
+            f"This is the {strip_label} portion of the right side. "
+            f"Extract only the rows visible in this portion.\n"
+        )
+
+    parts.append(
+        'Respond with ONLY a JSON object: {"rows": [[val1, val2, ...], ...]}\n'
+        "Every value must be a string or null. No integers, no floats.\n"
+    )
+
+    return "\n".join(parts)
+
+
 ANALYSIS_SYSTEM_PROMPT = """
 You are an Excel data analysis AI. You analyze data in Excel workbooks using Python xlwings.
 
@@ -473,44 +263,8 @@ RULES:
 5. You may import: math, statistics, datetime, collections
 6. Read data from the sheet using ws.range("A1:Z100").value or similar ranges.
 7. Always print your analysis results using print() statements.
-8. For statistical analysis, use the statistics module: statistics.mean(), statistics.median(), statistics.stdev(), etc.
-9. If you need to identify patterns, read the data first, then analyze it.
-10. Present results clearly with formatted print statements.
-11. Use ws.range("A1").expand().value to read entire data blocks dynamically.
-12. Use ws.used_range to find where data ends.
-
-EXAMPLE TASK: "What is the average of column B?"
-EXAMPLE OUTPUT:
-data = ws.range("B2:B100").value
-values = [v for v in data if v is not None]
-print(f"Count: {len(values)}")
-print(f"Average: {statistics.mean(values):.2f}")
-print(f"Min: {min(values)}")
-print(f"Max: {max(values)}")
-
-EXAMPLE TASK: "Find outliers in column C"
-EXAMPLE OUTPUT:
-data = ws.range("C2:C100").value
-values = [v for v in data if v is not None]
-mean = statistics.mean(values)
-stdev = statistics.stdev(values)
-outliers = [v for v in values if abs(v - mean) > 2 * stdev]
-print(f"Mean: {mean:.2f}, StdDev: {stdev:.2f}")
-print(f"Outliers (>{mean + 2*stdev:.2f} or <{mean - 2*stdev:.2f}):")
-for o in outliers:
-    print(f"  {o}")
-
-EXAMPLE TASK: "Show a summary of all columns"
-EXAMPLE OUTPUT:
-data = ws.range("A1").expand("table").value
-headers = data[0]
-for i, h in enumerate(headers):
-    col_data = [row[i] for row in data[1:] if row[i] is not None]
-    numeric = [v for v in col_data if isinstance(v, (int, float))]
-    if numeric:
-        print(f"{h}: count={len(numeric)}, avg={statistics.mean(numeric):.2f}, min={min(numeric)}, max={max(numeric)}")
-    else:
-        print(f"{h}: count={len(col_data)} (text)")
+8. Use ws.range("A1").expand().value to read entire data blocks dynamically.
+9. Use ws.used_range to find where data ends.
 """
 
 COMMON_COMMANDS = [

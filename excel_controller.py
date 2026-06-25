@@ -81,44 +81,60 @@ class ExcelController:
 
         self.undo_manager.save_snapshot(self.wb)
 
+        # Pre-import common modules so LLM-generated code can use them directly
+        import json, math, datetime, re, collections, statistics, time, random
+        _MODULES = {
+            "json": json, "math": math, "datetime": datetime, "re": re,
+            "collections": collections, "statistics": statistics,
+            "time": time, "random": random,
+        }
+
+        _SAFE_IMPORTS = set(_MODULES.keys())
+
+        def _safe_import(name, *args, **kwargs):
+            if name in _SAFE_IMPORTS:
+                import importlib
+                return importlib.import_module(name)
+            raise ImportError(f"Module '{name}' is not allowed in this sandbox")
+
+        globals_dict = {
+            "__builtins__": {
+                "__import__": _safe_import,
+                "print": print,
+                "range": range,
+                "len": len,
+                "int": int,
+                "float": float,
+                "str": str,
+                "bool": bool,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "set": set,
+                "enumerate": enumerate,
+                "zip": zip,
+                "map": map,
+                "filter": filter,
+                "sorted": sorted,
+                "reversed": reversed,
+                "abs": abs,
+                "min": min,
+                "max": max,
+                "sum": sum,
+                "round": round,
+                "isinstance": isinstance,
+                "type": type,
+                "True": True,
+                "False": False,
+                "None": None,
+            },
+        }
+        globals_dict.update(_MODULES)
+
         local_vars = {"ws": self.ws, "wb": self.wb, "xw": xw}
 
         try:
-            exec(
-                code,
-                {
-                    "__builtins__": {
-                        "print": print,
-                        "range": range,
-                        "len": len,
-                        "int": int,
-                        "float": float,
-                        "str": str,
-                        "bool": bool,
-                        "list": list,
-                        "dict": dict,
-                        "tuple": tuple,
-                        "set": set,
-                        "enumerate": enumerate,
-                        "zip": zip,
-                        "map": map,
-                        "filter": filter,
-                        "sorted": sorted,
-                        "reversed": reversed,
-                        "abs": abs,
-                        "min": min,
-                        "max": max,
-                        "sum": sum,
-                        "round": round,
-                        "isinstance": isinstance,
-                        "type": type,
-                        "True": True,
-                        "False": False,
-                        "None": None,
-                    }
-                },
-                local_vars,
-            )
+            exec(code, globals_dict, local_vars)
             self.wb.save()
             return True, "Done."
         except Exception as e:
@@ -134,53 +150,64 @@ class ExcelController:
 
         import io
         import contextlib
+        import json, math, datetime, re, collections, statistics, time, random
 
-        local_vars = {
-            "ws": self.ws,
-            "wb": self.wb,
-            "xw": xw,
-            "statistics": __import__("statistics"),
-            "math": __import__("math"),
-            "collections": __import__("collections"),
-            "datetime": __import__("datetime"),
+        _MODULES = {
+            "json": json, "math": math, "datetime": datetime, "re": re,
+            "collections": collections, "statistics": statistics,
+            "time": time, "random": random,
         }
+
+        _SAFE_IMPORTS = set(_MODULES.keys())
+
+        def _safe_import(name, *args, **kwargs):
+            if name in _SAFE_IMPORTS:
+                import importlib
+                return importlib.import_module(name)
+            raise ImportError(f"Module '{name}' is not allowed in this sandbox")
+
+        globals_dict = {
+            "__builtins__": {
+                "__import__": _safe_import,
+                "print": print,
+                "range": range,
+                "len": len,
+                "int": int,
+                "float": float,
+                "str": str,
+                "bool": bool,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "set": set,
+                "enumerate": enumerate,
+                "zip": zip,
+                "map": map,
+                "filter": filter,
+                "sorted": sorted,
+                "reversed": reversed,
+                "abs": abs,
+                "min": min,
+                "max": max,
+                "sum": sum,
+                "round": round,
+                "isinstance": isinstance,
+                "type": type,
+                "True": True,
+                "False": False,
+                "None": None,
+            },
+        }
+        globals_dict.update(_MODULES)
+
+        local_vars = {"ws": self.ws, "wb": self.wb, "xw": xw}
 
         output = io.StringIO()
         try:
             with contextlib.redirect_stdout(output):
                 exec(
                     code,
-                    {
-                        "__builtins__": {
-                            "print": print,
-                            "range": range,
-                            "len": len,
-                            "int": int,
-                            "float": float,
-                            "str": str,
-                            "bool": bool,
-                            "list": list,
-                            "dict": dict,
-                            "tuple": tuple,
-                            "set": set,
-                            "enumerate": enumerate,
-                            "zip": zip,
-                            "map": map,
-                            "filter": filter,
-                            "sorted": sorted,
-                            "reversed": reversed,
-                            "abs": abs,
-                            "min": min,
-                            "max": max,
-                            "sum": sum,
-                            "round": round,
-                            "isinstance": isinstance,
-                            "type": type,
-                            "True": True,
-                            "False": False,
-                            "None": None,
-                        }
-                    },
+                    globals_dict,
                     local_vars,
                 )
             return True, output.getvalue()

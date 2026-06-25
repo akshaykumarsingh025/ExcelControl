@@ -15,6 +15,7 @@ from prompts import (
     STRUCTURE_ANALYSIS_PROMPT,
     JSON_EXTRACTION_SYSTEM_PROMPT,
     make_json_extraction_prompt,
+    make_right_half_extraction_prompt,
 )
 from validators import validate_and_correct_table
 
@@ -80,6 +81,8 @@ class ExcelAgent:
         except Exception as e:
             return f"# ERROR: Could not reach Ollama\n# {str(e)}"
 
+    # ── Image preprocessing ───────────────────────────────────────────────
+
     def _normalize_and_enhance(self, img):
         from PIL import Image as PILImage
         import PIL.ImageEnhance as IE
@@ -93,22 +96,16 @@ class ExcelAgent:
         img = img.convert("L")
         img = img.filter(IF.MedianFilter(size=3))
 
-        # Background subtraction to handle uneven lighting (register crease)
         bg = img.filter(IF.GaussianBlur(radius=25))
         img = IC.subtract(img, bg, scale=1.0, offset=128)
 
         img = IO.autocontrast(img, cutoff=2)
         img = IE.Contrast(img).enhance(1.8)
-
-        # Use SHARPEN instead of EDGE_ENHANCE_MORE — preserves thin handwritten strokes
         img = img.filter(IF.SHARPEN)
 
-        # Soft contrast enhancement using Otsu's method (NOT hard binarization)
-        # Hard B&W destroys handwriting detail — keep grayscale for the vision model
         try:
             import numpy as np
             arr = np.array(img).astype(np.float32)
-            # Otsu threshold for reference point
             hist, _ = np.histogram(arr.flatten(), bins=256, range=(0, 256))
             total = arr.size
             sum_total = np.sum(np.arange(256) * hist)
@@ -130,39 +127,32 @@ class ExcelAgent:
                 if var_between > max_var:
                     max_var = var_between
                     threshold = t
-            # Soft sigmoid-based contrast around the Otsu threshold
-            # Pulls dark text darker and light background lighter, but preserves gradients
-            k = 0.03  # sigmoid steepness (lower = softer)
+            k = 0.03
             arr = 255.0 / (1.0 + np.exp(-k * (arr - threshold)))
             arr = np.clip(arr, 0, 255).astype(np.uint8)
             img = PILImage.fromarray(arr)
         except ImportError:
-            pass  # Fall back to non-enhanced image
+            pass
 
         img = img.convert("RGB")
         return img
 
     def _deskew_image(self, img):
-        """Deskew a grayscale image using horizontal projection profile."""
         try:
             import numpy as np
             from PIL import Image as PILImage
 
             gray = img.convert("L") if img.mode != "L" else img
             arr = np.array(gray)
-            # Invert so text is white
             inv = 255 - arr
 
             best_angle = 0
             best_score = 0
-            # Search ±5 degrees in 0.5 degree steps
             for angle_10x in range(-50, 51, 5):
                 angle = angle_10x / 10.0
                 rotated = img.rotate(angle, expand=False, fillcolor=255)
                 rot_arr = 255 - np.array(rotated.convert("L"))
-                # Horizontal projection: sum each row
                 projection = np.sum(rot_arr, axis=1)
-                # Score = variance of projection (higher = more aligned)
                 score = np.var(projection)
                 if score > best_score:
                     best_score = score
@@ -186,14 +176,12 @@ class ExcelAgent:
         if img.mode == "RGBA":
             img = img.convert("RGB")
 
-        # Deskew before any resizing
         img = self._deskew_image(img)
 
         max_dim = 4096
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), PILImage.LANCZOS)
 
-        # Upscale small images to at least 3072px for readable handwriting
         if max(img.size) < 3072:
             scale = 3072 / max(img.size)
             img = img.resize(
@@ -207,17 +195,34 @@ class ExcelAgent:
         img.save(buf, format="PNG")
         return buf.getvalue()
 
+    def _preprocess_strip(self, img):
+        from PIL import Image as PILImage
+
+        if img.mode == "RGBA":
+            img = img.convert("RGB")
+
+        max_dim = 4096
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), PILImage.LANCZOS)
+
+        if max(img.size) < 3072:
+            scale = 3072 / max(img.size)
+            img = img.resize(
+                (int(img.width * scale), int(img.height * scale)),
+                PILImage.LANCZOS,
+            )
+
+        img = self._normalize_and_enhance(img)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    # ── API calls ─────────────────────────────────────────────────────────
+
     def _call_ollama_api(self, prompt: str, image_bytes: bytes,
                          system_prompt: str = None,
                          json_mode: bool = False) -> str:
-        """Call Ollama chat API with an image.
-
-        Args:
-            prompt: The user message.
-            image_bytes: PNG image as bytes.
-            system_prompt: Override system prompt (defaults to VISION_SYSTEM_PROMPT).
-            json_mode: If True, force JSON output via Ollama format parameter.
-        """
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         if system_prompt is None:
             system_prompt = VISION_SYSTEM_PROMPT
@@ -265,20 +270,16 @@ class ExcelAgent:
         finally:
             os.unlink(tmp.name)
 
-    def _parse_json_rows(self, text: str) -> list | None:
-        """Parse JSON response from Ollama into a list of rows.
+    # ── JSON parsing ──────────────────────────────────────────────────────
 
-        Handles both {"rows": [...]} format and bare [[...]] format.
-        """
+    def _parse_json_rows(self, text: str) -> list | None:
         text = text.strip()
-        # Remove markdown code fences if present
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
 
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            # Try to extract JSON from surrounding text
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 try:
@@ -286,7 +287,6 @@ class ExcelAgent:
                 except json.JSONDecodeError:
                     return None
             else:
-                # Try bare array
                 match = re.search(r"\[.*\]", text, re.DOTALL)
                 if match:
                     try:
@@ -298,13 +298,10 @@ class ExcelAgent:
                 return None
 
         if isinstance(parsed, dict):
-            # Look for "rows" key
             if "rows" in parsed:
                 return parsed["rows"]
-            # Look for "data" key
             if "data" in parsed:
                 return parsed["data"]
-            # Look for first list value
             for v in parsed.values():
                 if isinstance(v, list):
                     return v
@@ -314,7 +311,6 @@ class ExcelAgent:
         return None
 
     def _extract_data_list(self, text: str):
-        """Legacy: parse Python-style data = [...] from text."""
         idx = text.find("data = [")
         if idx < 0:
             return None
@@ -337,11 +333,10 @@ class ExcelAgent:
         except Exception:
             return None
 
-    # ── Two-Pass Extraction Architecture ──────────────────────────────────
+    # ── Core extraction: Pass 1 ───────────────────────────────────────────
 
     def _analyze_structure(self, image_bytes: bytes) -> dict | None:
-        """Pass 1: Detect table structure (rows, columns, headers)."""
-        prompt = "Analyze this handwritten table. Count the data rows and identify all column headers."
+        prompt = "Analyze this table image. Count the data rows and identify all column headers."
         raw = self._call_ollama_api(
             prompt, image_bytes,
             system_prompt=STRUCTURE_ANALYSIS_PROMPT,
@@ -355,10 +350,11 @@ class ExcelAgent:
             pass
         return None
 
+    # ── Core extraction: Pass 2 (single image or strip) ───────────────────
+
     def _extract_json_data(self, image_bytes: bytes, headers: list[str] | None,
                             expected_rows: int | None = None,
                             strip_label: str = "") -> list | None:
-        """Pass 2: Extract table data as JSON rows."""
         prompt = make_json_extraction_prompt(
             headers=headers,
             expected_rows=expected_rows,
@@ -371,24 +367,291 @@ class ExcelAgent:
         )
         return self._parse_json_rows(raw)
 
-    # Standard column set for Indian bank registers (used as fallback)
-    _BANK_REGISTER_HEADERS = [
-        "S.No", "Name", "Father Name", "Designation",
-        "Account Holder", "Account No", "IFSC Code", "Bank Name", "Branch"
-    ]
+    # ── Row helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_null(val) -> bool:
+        if val is None:
+            return True
+        s = str(val).strip().lower()
+        return s in ("null", "none", "")
+
+    @staticmethod
+    def _try_int(val) -> int | None:
+        try:
+            return int(str(val).strip())
+        except (ValueError, TypeError):
+            return None
+
+    def _rows_are_same_record(self, row_a, row_b):
+        if len(row_a) > 0 and len(row_b) > 0:
+            a_sno = self._try_int(row_a[0])
+            b_sno = self._try_int(row_b[0])
+            if a_sno is not None and b_sno is not None:
+                if a_sno == b_sno:
+                    return True
+
+        min_len = min(len(row_a), len(row_b))
+        if min_len >= 2:
+            a_name = str(row_a[1]).strip().lower() if row_a[1] is not None and not self._is_null(row_a[1]) else ""
+            b_name = str(row_b[1]).strip().lower() if row_b[1] is not None and not self._is_null(row_b[1]) else ""
+            if a_name and b_name and len(a_name) >= 3 and a_name == b_name:
+                return True
+
+        return False
+
+    def _merge_rows(self, row_a, row_b):
+        max_len = max(len(row_a), len(row_b))
+        merged = []
+        for i in range(max_len):
+            a = row_a[i] if i < len(row_a) else None
+            b = row_b[i] if i < len(row_b) else None
+
+            a_null = self._is_null(a)
+            b_null = self._is_null(b)
+
+            if a_null and b_null:
+                merged.append(None)
+            elif a_null:
+                merged.append(b)
+            elif b_null:
+                merged.append(a)
+            elif str(a).strip() == str(b).strip():
+                merged.append(a)
+            elif len(str(b).strip()) > len(str(a).strip()):
+                merged.append(b)
+            else:
+                merged.append(a)
+        return merged
+
+    # ── Strip-based extraction for tall images ────────────────────────────
+
+    def _extract_with_strips(self, img, headers, expected_rows, extract_fn=None):
+        """Extract data from a PIL Image using horizontal strips.
+
+        Args:
+            img: PIL Image (already preprocessed or original)
+            headers: Column headers list
+            expected_rows: Expected number of data rows
+            extract_fn: Function(image_bytes, headers, expected_rows, strip_label) -> list|None
+                        Defaults to self._extract_json_data
+        """
+        if extract_fn is None:
+            extract_fn = self._extract_json_data
+
+        w, h = img.size
+        rows_per_strip = 10
+        num_strips = max(2, (expected_rows + rows_per_strip - 1) // rows_per_strip)
+        strip_height = h // num_strips
+        overlap = int(strip_height * 0.3)
+
+        strips = []
+        for i in range(num_strips):
+            y_start = max(0, i * strip_height - (overlap if i > 0 else 0))
+            y_end = min(h, (i + 1) * strip_height + (overlap if i < num_strips - 1 else 0))
+            strip_img = img.crop((0, y_start, w, y_end))
+            labels = ["top", "upper-middle", "middle", "lower-middle", "bottom"]
+            label = labels[min(i, len(labels) - 1)] if num_strips <= 5 else f"strip {i+1} of {num_strips}"
+            strips.append((label, strip_img))
+
+        all_rows = []
+        for label, strip_img in strips:
+            strip_bytes = self._preprocess_strip(strip_img)
+            rows_in_strip = extract_fn(strip_bytes, headers, rows_per_strip, label)
+            if rows_in_strip:
+                for row in rows_in_strip:
+                    row = [None if self._is_null(c) else c for c in row]
+                    merged = False
+                    for i, existing in enumerate(all_rows):
+                        if self._rows_are_same_record(existing, row):
+                            all_rows[i] = self._merge_rows(existing, row)
+                            merged = True
+                            break
+                    if not merged:
+                        all_rows.append(row)
+
+        return all_rows
+
+    # ── Two-page split extraction ──────────────────────────────────────────
+
+    def _split_headers(self, headers: list[str]) -> tuple[list[str], list[str], int]:
+        """Determine left-page and right-page headers from the full header list.
+
+        For two-page spreads, the right page typically starts at the first column
+        that looks like a numeric/code column after text columns.
+
+        Returns (left_headers, right_headers, split_index).
+        split_index is the index in the full headers where the right page begins.
+        """
+        if not headers:
+            return headers, [], len(headers)
+
+        split_idx = len(headers)
+
+        text_keywords = {"name", "designation", "title", "type", "category", "holder", "serial", "s.no", "s no"}
+        code_keywords = {"account", "ifsc", "bank", "branch", "code", "number", "no", "amount", "id", "micr", "upi"}
+
+        for i, h in enumerate(headers):
+            h_lower = h.lower().strip()
+            for kw in code_keywords:
+                if kw in h_lower and i > 0:
+                    prev_lower = headers[i - 1].lower().strip()
+                    prev_is_text = any(kw2 in prev_lower for kw2 in text_keywords)
+                    curr_is_code = any(kw2 in h_lower for kw2 in code_keywords)
+                    if prev_is_text and curr_is_code:
+                        split_idx = i
+                        break
+            if split_idx < len(headers):
+                break
+
+        if split_idx >= len(headers):
+            mid = len(headers) // 2
+            if mid > 1:
+                split_idx = mid
+
+        left_headers = headers[:split_idx]
+        right_headers = ["S.No"] + headers[split_idx:]
+        return left_headers, right_headers, split_idx
+
+    def _extract_left_page(self, image_path: str, headers: list[str],
+                           expected_rows: int) -> list:
+        """Extract left-page columns by cropping the left half of the image."""
+        from PIL import Image as PILImage
+
+        img = PILImage.open(image_path)
+        w, h = img.size
+
+        margin = int(w * 0.04)
+        right_boundary = (w // 2) + margin
+        left_img = img.crop((0, 0, right_boundary, h))
+
+        left_headers, _, _ = self._split_headers(headers)
+
+        if expected_rows > 10:
+            return self._extract_with_strips(left_img, left_headers, expected_rows)
+        else:
+            left_bytes = self._preprocess_strip(left_img)
+            rows = self._extract_json_data(left_bytes, left_headers, expected_rows, "left page")
+            return rows if rows else []
+
+    def _extract_right_page(self, image_path: str, headers: list[str],
+                            expected_rows: int) -> list:
+        """Extract right-page columns by cropping the right half of the image."""
+        from PIL import Image as PILImage
+
+        img = PILImage.open(image_path)
+        w, h = img.size
+
+        margin = int(w * 0.04)
+        left_boundary = (w // 2) - margin
+        right_img = img.crop((left_boundary, 0, w, h))
+
+        _, right_headers, _ = self._split_headers(headers)
+
+        def extract_right_strip(image_bytes, hdrs, exp_rows, strip_label):
+            prompt = make_right_half_extraction_prompt(hdrs, exp_rows, strip_label)
+            raw = self._call_ollama_api(
+                prompt, image_bytes,
+                system_prompt=JSON_EXTRACTION_SYSTEM_PROMPT,
+                json_mode=True,
+            )
+            return self._parse_json_rows(raw)
+
+        if expected_rows > 10:
+            return self._extract_with_strips(right_img, right_headers, expected_rows, extract_right_strip)
+        else:
+            right_bytes = self._preprocess_strip(right_img)
+            prompt = make_right_half_extraction_prompt(right_headers, expected_rows, "")
+            raw = self._call_ollama_api(
+                prompt, right_bytes,
+                system_prompt=JSON_EXTRACTION_SYSTEM_PROMPT,
+                json_mode=True,
+            )
+            rows = self._parse_json_rows(raw)
+            return rows if rows else []
+
+    def _merge_left_right(self, left_rows: list, right_rows: list,
+                          headers: list[str]) -> list:
+        """Merge left-page and right-page extraction results row by row.
+
+        Strategy:
+        1. Match by S.No (col 0 in both left and right rows)
+        2. Fall back to row order for unmatched rows
+        3. Right-page rows have format: [S.No, right_col1, right_col2, ...]
+           Left-page rows have format: [S.No, left_col1, left_col2, ..., None, None, ...]
+        """
+        _, _, split_idx = self._split_headers(headers)
+        right_data_start = split_idx
+
+        right_by_sno = {}
+        right_unmatched = []
+        for row in right_rows:
+            row = [None if self._is_null(c) else c for c in row]
+            sno = self._try_int(row[0]) if len(row) > 0 else None
+            if sno is not None:
+                right_by_sno[sno] = row
+            else:
+                right_unmatched.append(row)
+
+        merged = []
+        used_sno = set()
+
+        for left_row in left_rows:
+            left_row = [None if self._is_null(c) else c for c in left_row]
+            full_row = list(left_row)
+            while len(full_row) < len(headers):
+                full_row.append(None)
+
+            matched_right = None
+            sno = self._try_int(left_row[0]) if len(left_row) > 0 else None
+
+            if sno is not None and sno in right_by_sno:
+                matched_right = right_by_sno[sno]
+                used_sno.add(sno)
+
+            if matched_right is not None:
+                right_vals = matched_right[1:]
+                for ri, val in enumerate(right_vals):
+                    target_col = right_data_start + ri
+                    if target_col < len(full_row):
+                        if self._is_null(full_row[target_col]) and not self._is_null(val):
+                            full_row[target_col] = val
+
+            merged.append(full_row)
+
+        remaining_right = [row for sno, row in right_by_sno.items() if sno not in used_sno]
+        remaining_right.extend(right_unmatched)
+
+        if remaining_right:
+            main_missing = []
+            for i, row in enumerate(merged):
+                has_right = any(
+                    not self._is_null(row[j]) for j in range(right_data_start, len(row))
+                )
+                if not has_right:
+                    main_missing.append(i)
+
+            ri = 0
+            for main_idx in main_missing:
+                if ri >= len(remaining_right):
+                    break
+                right_row = remaining_right[ri]
+                right_vals = right_row[1:]
+                for rvi, val in enumerate(right_vals):
+                    target_col = right_data_start + rvi
+                    if target_col < len(merged[main_idx]):
+                        if self._is_null(merged[main_idx][target_col]) and not self._is_null(val):
+                            merged[main_idx][target_col] = val
+                ri += 1
+
+        return merged
+
+    # ── Main entry point ──────────────────────────────────────────────────
 
     def ask_with_image_json(self, image_path: str, user_command: str = "") -> str:
-        """Extract table data from an image using two-pass JSON architecture.
-
-        Pass 1: Analyze structure (row count, headers)
-        Pass 2: Extract data as JSON (with strips for tall images)
-        Post-process: Validate and correct IFSC, bank names, etc.
-        Output: xlwings Python code ready to execute.
-        """
         try:
             raw_bytes = self._preprocess_image(image_path)
 
-            # If user provided a specific command, use old path
             if user_command:
                 return self.ask_with_image(image_path, user_command)
 
@@ -403,64 +666,76 @@ class ExcelAgent:
                 expected_rows = None
                 is_two_page = False
 
-            # Supplement weak structure analysis for bank registers
-            # If the model detected too few columns but found bank-related headers,
-            # use the standard bank register column set
-            if headers and len(headers) < 8:
-                has_bank_indicators = any(
-                    keyword in h.lower()
-                    for h in headers
-                    for keyword in ["bank", "ifsc", "account", "name", "designation"]
-                )
-                if has_bank_indicators or is_two_page:
-                    headers = self._BANK_REGISTER_HEADERS
-
-            # Determine if image needs strip-based extraction
-            # Use strips when many rows expected (regardless of aspect ratio)
-            use_strips = False
-            if expected_rows and expected_rows > 20:
-                use_strips = True
-            else:
+            # Detect two-page spread from image dimensions
+            if not is_two_page:
                 try:
                     from PIL import Image as PILImage
                     img = PILImage.open(image_path)
                     w, h = img.size
-                    if h > w * 1.2 and (expected_rows is None or expected_rows > 10):
-                        use_strips = True
+                    if w > h * 1.2:
+                        is_two_page = True
                 except ImportError:
                     pass
 
-            # For two-page spreads with many expected rows, always use strips
-            if is_two_page and (expected_rows is None or expected_rows > 10):
-                use_strips = True
-                if expected_rows is None:
-                    expected_rows = 28  # reasonable default for register pages
-
-            if use_strips and expected_rows:
-                # Add a 30% buffer to expected rows so strip prompts don't stop early
-                padded_expected = int(expected_rows * 1.3)
-                all_rows = self._extract_with_json_strips(
-                    image_path, raw_bytes, headers, padded_expected
-                )
-            else:
-                # Single-pass extraction
-                all_rows = self._extract_json_data(
-                    raw_bytes, headers, expected_rows
-                )
-
-            if not all_rows:
-                # Fallback to legacy method
+            if not headers:
                 return self.ask_with_image(image_path, "")
 
-            # Remove hallucinated rows (model sometimes invents data)
-            all_rows = self._remove_hallucinated_rows(all_rows, headers)
+            padded_expected = int((expected_rows or 25) * 1.3)
+
+            # ── Pass 2a: Full-image extraction (reads left-side data best) ──
+            full_img_rows = None
+            try:
+                from PIL import Image as PILImage
+                full_img = PILImage.open(io.BytesIO(raw_bytes))
+                if padded_expected > 15:
+                    full_img_rows = self._extract_with_strips(full_img, headers, padded_expected)
+                else:
+                    full_img_rows = self._extract_json_data(raw_bytes, headers, padded_expected)
+                    if full_img_rows:
+                        full_img_rows = [[None if self._is_null(c) else c for c in row] for row in full_img_rows]
+            except Exception:
+                pass
+
+            # ── Pass 2b: Split extraction for two-page spreads ──────────────
+            split_rows = None
+            if is_two_page:
+                try:
+                    left_rows = self._extract_left_page(image_path, headers, padded_expected)
+                    right_rows = self._extract_right_page(image_path, headers, padded_expected)
+                    if left_rows and right_rows:
+                        split_rows = self._merge_left_right(left_rows, right_rows, headers)
+                    elif left_rows:
+                        split_rows = left_rows
+                    elif right_rows:
+                        split_rows = right_rows
+                except Exception:
+                    pass
+
+            # ── Merge both extraction passes for maximum accuracy ───────────
+            if full_img_rows and split_rows:
+                all_rows = self._merge_multi_pass(full_img_rows, split_rows, headers)
+            elif full_img_rows:
+                all_rows = full_img_rows
+            elif split_rows:
+                all_rows = split_rows
+            else:
+                return self.ask_with_image(image_path, "")
+
+            # Clean up null strings
+            all_rows = [
+                [None if self._is_null(c) else c for c in row]
+                for row in all_rows
+            ]
+
+            # Ensure all rows have exactly len(headers) columns (trim or pad)
+            num_cols = len(headers)
+            all_rows = [
+                row[:num_cols] + [None] * max(0, num_cols - len(row))
+                for row in all_rows
+            ]
 
             # Build full data with headers
-            if headers:
-                full_data = [headers] + all_rows
-            else:
-                # First row might be header
-                full_data = all_rows
+            full_data = [headers] + all_rows
 
             # Post-process: run validators
             try:
@@ -474,7 +749,6 @@ class ExcelAgent:
             except Exception:
                 warning_comment = "# Validators could not run\n"
 
-            # Generate xlwings code (using pprint to ensure valid Python syntax like None instead of null)
             import pprint
             data_str = pprint.pformat(full_data, indent=4)
             return (
@@ -489,118 +763,72 @@ class ExcelAgent:
         except Exception as e:
             return f"# ERROR: Image processing failed\n# {str(e)}"
 
-    def _remove_hallucinated_rows(self, rows: list, headers: list | None) -> list:
-        """Detect and remove rows that appear to be hallucinated by the model.
+    def _merge_multi_pass(self, pass_a_rows: list, pass_b_rows: list,
+                           headers: list[str]) -> list:
+        """Merge results from two extraction passes for maximum accuracy.
 
-        Common hallucination patterns:
-        - Sequential account numbers (100000000001, 100000000002, ...)
-        - Repeated father names across many rows (all "LateRam")
-        - Names following a pattern (Smt. Shanti, Smt. Meena, Smt. Anita, ...)
-        - Identical fake account numbers (100000000000)
+        pass_a = full-image extraction (better left-side data)
+        pass_b = split extraction (better right-side data)
+
+        For each row in pass_a, find matching row in pass_b and merge,
+        preferring non-null values from either pass.
         """
-        if len(rows) < 5:
-            return rows
+        idx_b_by_sno = {}
+        idx_b_by_name = {}
+        for idx, row in enumerate(pass_b_rows):
+            if len(row) > 0 and row[0] is not None:
+                sno = self._try_int(row[0])
+                if sno is not None:
+                    idx_b_by_sno[sno] = idx
+            if len(row) > 1 and row[1] is not None:
+                name_key = str(row[1]).strip().lower()
+                if name_key and len(name_key) >= 3:
+                    idx_b_by_name.setdefault(name_key, idx)
 
-        clean_rows = []
-        sequential_count = 0
-        identical_acct_count = 0
+        used_b = set()
+        merged = []
 
-        for i, row in enumerate(rows):
-            is_suspicious = False
+        for row_a in pass_a_rows:
+            row_a = [None if self._is_null(c) else c for c in row_a]
+            match_b_idx = None
 
-            # Check for sequential or identical account-number patterns
-            if i > 0 and len(row) > 4 and len(clean_rows) > 0:
-                prev_row = clean_rows[-1] if clean_rows else None
-                if prev_row and len(prev_row) > 4:
-                    try:
-                        curr_acct = str(row[5]).strip() if len(row) > 5 and row[5] else ""
-                        prev_acct = str(prev_row[5]).strip() if len(prev_row) > 5 and prev_row[5] else ""
-                        
-                        if curr_acct and prev_acct:
-                            if curr_acct == prev_acct and len(curr_acct) >= 8:
-                                identical_acct_count += 1
-                                if identical_acct_count >= 2:
-                                    is_suspicious = True
-                            elif curr_acct.isdigit() and prev_acct.isdigit() and int(curr_acct) == int(prev_acct) + 1:
-                                sequential_count += 1
-                                if sequential_count >= 2:
-                                    is_suspicious = True
-                            else:
-                                sequential_count = 0
-                                identical_acct_count = 0
-                        else:
-                            sequential_count = 0
-                            identical_acct_count = 0
-                    except (ValueError, TypeError, IndexError):
-                        sequential_count = 0
-                        identical_acct_count = 0
+            if len(row_a) > 0 and row_a[0] is not None:
+                sno = self._try_int(row_a[0])
+                if sno is not None and sno in idx_b_by_sno:
+                    match_b_idx = idx_b_by_sno[sno]
 
-            # Check for repeated father-name patterns (hallucination signal)
-            if i >= 5 and len(row) > 2:
-                recent_fathers = [
-                    str(r[2]).strip() if len(r) > 2 and r[2] else ""
-                    for r in rows[max(0, i-4):i]
-                ]
-                curr_father = str(row[2]).strip() if row[2] else ""
-                if curr_father and recent_fathers.count(curr_father) >= 3:
-                    is_suspicious = True
+            if match_b_idx is None and len(row_a) > 1 and row_a[1] is not None:
+                name_key = str(row_a[1]).strip().lower()
+                if name_key and len(name_key) >= 3 and name_key in idx_b_by_name:
+                    candidate = idx_b_by_name[name_key]
+                    if candidate not in used_b:
+                        match_b_idx = candidate
 
-            if not is_suspicious:
-                clean_rows.append(row)
+            if match_b_idx is not None and match_b_idx not in used_b:
+                row_b = pass_b_rows[match_b_idx]
+                row_b = [None if self._is_null(c) else c for c in row_b]
+                merged_row = self._merge_rows(row_a, row_b)
+                used_b.add(match_b_idx)
+            else:
+                merged_row = list(row_a)
 
-        return clean_rows
+            while len(merged_row) < len(headers):
+                merged_row.append(None)
+            merged.append(merged_row)
 
-    def _extract_with_json_strips(self, image_path: str, raw_bytes: bytes,
-                                   headers: list[str] | None,
-                                   expected_rows: int) -> list:
-        """Extract data from a tall image using row-based strips with JSON output."""
-        from PIL import Image as PILImage
+        for idx, row_b in enumerate(pass_b_rows):
+            if idx in used_b:
+                continue
+            row_b = [None if self._is_null(c) else c for c in row_b]
+            while len(row_b) < len(headers):
+                row_b.append(None)
+            merged.append(row_b)
 
-        img = PILImage.open(image_path)
-        w, h = img.size
+        return merged
 
-        # Calculate strip sizes based on expected row count
-        # Aim for ~7 rows per strip with overlap to ensure we hit the bottom rows
-        rows_per_strip = 7
-        num_strips = max(2, (expected_rows + rows_per_strip - 1) // rows_per_strip)
-
-        # Height per strip with overlap
-        strip_height = h // num_strips
-        overlap = int(strip_height * 0.3)  # 30% overlap for safety
-
-        strips = []
-        for i in range(num_strips):
-            y_start = max(0, i * strip_height - (overlap if i > 0 else 0))
-            y_end = min(h, (i + 1) * strip_height + (overlap if i < num_strips - 1 else 0))
-            strip_img = img.crop((0, y_start, w, y_end))
-
-            labels = ["top", "upper-middle", "middle", "lower-middle", "bottom"]
-            label = labels[min(i, len(labels) - 1)] if num_strips <= 5 else f"strip {i+1} of {num_strips}"
-            strips.append((label, strip_img))
-
-        all_rows = []
-        for label, strip_img in strips:
-            strip_bytes = self._preprocess_strip(strip_img)
-            rows_in_strip = self._extract_json_data(
-                strip_bytes, headers,
-                expected_rows=rows_per_strip,
-                strip_label=label,
-            )
-            if rows_in_strip:
-                for row in rows_in_strip:
-                    # Deduplicate against existing rows
-                    is_dup = False
-                    for existing in all_rows:
-                        if self._rows_match(existing, row):
-                            is_dup = True
-                            break
-                    if not is_dup:
-                        all_rows.append(row)
-
-        return all_rows
+    # ── Legacy methods ─────────────────────────────────────────────────────
 
     def ask_with_image(self, image_path: str, user_command: str = "") -> str:
-        """Legacy extraction method using Python code output."""
         try:
             raw_bytes = self._preprocess_image(image_path)
 
@@ -689,29 +917,6 @@ class ExcelAgent:
         combined = self._merge_strip_results(results)
         return combined
 
-    def _preprocess_strip(self, img):
-        from PIL import Image as PILImage
-
-        if img.mode == "RGBA":
-            img = img.convert("RGB")
-
-        max_dim = 4096
-        if max(img.size) > max_dim:
-            img.thumbnail((max_dim, max_dim), PILImage.LANCZOS)
-
-        if max(img.size) < 3072:
-            scale = 3072 / max(img.size)
-            img = img.resize(
-                (int(img.width * scale), int(img.height * scale)),
-                PILImage.LANCZOS,
-            )
-
-        img = self._normalize_and_enhance(img)
-
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-
     def _merge_strip_results(self, results):
         all_data = []
         header = None
@@ -734,12 +939,13 @@ class ExcelAgent:
                 for row in strip_rows:
                     padded = row + [None] * max(0, header_cols - len(row))
                     trimmed = padded[:header_cols]
-                    is_dup = False
-                    for existing in all_data:
-                        if self._rows_match(existing, trimmed):
-                            is_dup = True
+                    merged = False
+                    for i, existing in enumerate(all_data):
+                        if self._rows_are_same_record(existing, trimmed):
+                            all_data[i] = self._merge_rows(existing, trimmed)
+                            merged = True
                             break
-                    if not is_dup:
+                    if not merged:
                         all_data.append(trimmed)
 
         if header is None:
@@ -754,20 +960,6 @@ class ExcelAgent:
             f'ws.range("A1").expand("right").font.bold = True\n'
             f"ws.autofit()\n"
         )
-
-    def _rows_match(self, row_a, row_b, threshold=0.7):
-        min_len = min(len(row_a), len(row_b))
-        if min_len == 0:
-            return False
-        matches = 0
-        for i in range(min_len):
-            a = str(row_a[i]).strip().lower() if row_a[i] is not None else ""
-            b = str(row_b[i]).strip().lower() if row_b[i] is not None else ""
-            if a == b:
-                matches += 1
-            elif a and b and (a in b or b in a):
-                matches += 0.8
-        return matches / min_len >= threshold
 
     def execute_analysis(self, code: str, ws, wb) -> str:
         import contextlib

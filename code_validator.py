@@ -30,7 +30,6 @@ BLOCKED_BUILTINS = {
     "eval",
     "exec",
     "compile",
-    "__import__",
     "open",
     "globals",
     "locals",

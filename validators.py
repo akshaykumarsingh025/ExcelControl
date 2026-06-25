@@ -248,7 +248,9 @@ def validate_and_correct_table(data: list, ifsc_col: int = -3,
 
     # Validate each data row
     for i, row in enumerate(data[1:], start=1):
-        # Pad row to expected columns
+        # Ensure row has exactly num_cols columns (trim or pad)
+        if len(row) > num_cols:
+            del row[num_cols:]
         while len(row) < num_cols:
             row.append(None)
 
