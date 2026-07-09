@@ -33,7 +33,7 @@ echo [OK] Ollama started.
 :CheckDeps
 rem Install dependencies if needed
 echo [2/3] Checking Python dependencies...
-python -m pip install xlwings ollama --quiet
+python -m pip install xlwings ollama Pillow PyQt6 --quiet 2>nul
 echo [OK] Dependencies ready.
 
 rem Check if any model is available (not just gemma4)

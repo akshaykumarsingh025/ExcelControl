@@ -1,0 +1,144 @@
+ExcelAI v2.0 — Feature Catalog
+==============================
+
+CORE ENGINE
+-----------
+- AI-powered Excel automation via Ollama (local LLM inference)
+- Live Excel control via xlwings (read, write, format, chart, formula)
+- Code validation (AST-based safety checks before execution)
+- Dry-run preview (analyze what code will do without executing)
+- Analysis mode (AI answers data questions instead of writing code)
+- Auto-run mode (execute AI-generated code automatically)
+- Session persistence (save/load model, settings, conversation)
+- Undo/Redo support for Excel operations
+- Batch scheduler for automated jobs
+- VBA to Python conversion
+
+PAGES (14 sidebar entries)
+--------------------------
+
+1. HOME
+   - Quick actions: Open file, Connect to Excel, New workbook
+   - Template cards for common tasks
+   - Integrated chat panel
+
+2. SHEET VIEW
+   - Live interactive spreadsheet grid
+   - Sheet switcher, auto-refresh, edit mode
+   - AI chat for asking questions about data
+   - Formula builder (natural language to Excel formula)
+   - CSV export
+
+3. CODE EDITOR
+   - Syntax-highlighted Python code editor
+   - Execute / Validate / Dry-run buttons
+   - Smart error fix (paste error, get corrected code)
+   - Formula explainer (decodes complex formulas)
+   - VBA to Python converter
+   - Spreadsheet health check
+   - Integrated chat panel
+
+4. DATA TOOLS
+   - Data Cleaning Copilot (7 operations: dedupe, trim, fix dates,
+     standardize phones, normalize text, remove empty rows, fill down)
+   - Multi-File Intelligence (Compare, Merge, VLOOKUP, Diff)
+   - Image/Table to Excel (OCR pipeline with preprocessing)
+   - Email This Sheet (HTML table or CSV attachment)
+   - Export session as Python macro script
+
+5. QA & SOFTWARE TESTING
+   - AI Test Case Generator (with negative + boundary cases)
+   - Bug Report Generator (structured template)
+   - Test Case Reviewer (gap analysis)
+   - Requirement Traceability Matrix
+   - Test Data Generator (with invalid + international data)
+
+6. FINANCE & ACCOUNTING
+   - Bank Reconciliation
+   - Invoice Extractor (image/PDF to Excel)
+   - P&L Statement Builder
+   - Budget Variance Analyzer
+   - Tax Category Classifier (GST + US categories)
+
+7. HUMAN RESOURCES
+   - Resume Parser (skill extraction, keyword ranking)
+   - Attendance Report Generator
+   - Payroll Calculator (HRA, DA, PF, ESI, TDS, overtime)
+   - Employee Directory Builder
+   - Onboarding Checklist Generator
+
+8. MARKETING & SALES
+   - Lead Scoring Engine (custom rules)
+   - Campaign ROI Calculator
+   - Sentiment Analyzer (text review analysis)
+   - Email List Cleaner (validate, dedupe, fix case)
+
+9. PROJECT MANAGEMENT
+   - Gantt Chart Builder
+   - Sprint Backlog Template
+   - Risk Register
+   - RACI Matrix
+   - Status Report Generator
+
+10. EDUCATION
+    - Gradebook Builder (letter/percentage/GPA scales)
+    - Attendance Tracker (daily/weekly/monthly)
+    - Rubric Generator (custom criteria + levels)
+    - Study Planner (balanced/spaced repetition/block/Pomodoro)
+    - Flashcard Generator (with quiz mode)
+
+11. OPERATIONS & LOGISTICS
+    - Inventory Dashboard (with ABC analysis)
+    - Reorder Point Calculator (safety stock, Z-score)
+    - Shipping Tracker (carrier dropdown, auto-ETA)
+    - Multi-File Consolidator (merge + dedupe + align)
+
+12. REAL ESTATE
+    - EMI Calculator (with amortization schedule)
+    - Property Comparison Sheet (with ROI estimate)
+    - Rental Yield Calculator (gross/net yield, cap rate)
+
+13. HEALTHCARE
+    - Patient Schedule Builder (time slots, lunch break, buffer)
+    - Medication Tracker (side effects log, refill reminders)
+    - Clinical Data Cleaner (date normalization, BP standardization,
+      phone normalization, PHI handling, range validation)
+
+14. SETTINGS
+    - Model selection and refresh
+    - Auto-run / Dry-run / Analysis mode toggles
+    - Session management (save/load/clear)
+    - Batch scheduler info
+
+IMAGE / OCR PIPELINE
+--------------------
+- Image preprocessing (binarization, contrast, deskew, denoise)
+- Multi-pass OCR extraction (structure detection + data extraction)
+- Two-page spread support (left + right halves)
+- Post-OCR validation (IFSC, account numbers, bank names, serials)
+- Handwriting disambiguation rules
+
+SAFETY & VALIDATION
+--------------------
+- AST-based code validation (blocks os, subprocess, eval, open, etc.)
+- Blocked dunder attribute access (__class__, __globals__, etc.)
+- Blocked dangerous imports (27 modules)
+- Dry-run analysis (preview cells written, formulas, formatting)
+- Undo manager for reverting changes
+
+UI
+--
+- PyQt6 dark theme (Catppuccin Mocha palette)
+- Sidebar navigation with 14 pages
+- Toolbar with Open, Connect, New, Undo, Redo, Model selector
+- Chat panels with autocomplete, image import, syntax highlighting
+- Workflow pages with form-based parameter inputs
+
+TESTS
+-----
+- 70 unit tests across 5 test files
+- Code validator tests (10 cases)
+- Dry-run analyzer tests (10 cases)
+- Feature prompt tests (16 cases)
+- Validators tests (IFSC, account, bank, serials, completeness)
+- History and session manager tests

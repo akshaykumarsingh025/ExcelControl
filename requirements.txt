@@ -1,3 +1,4 @@
 xlwings
 ollama
 Pillow
+PyQt6

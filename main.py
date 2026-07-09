@@ -1,8 +1,15 @@
-# main.py
-import tkinter as tk
-from ui import ExcelAIApp
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from PyQt6.QtWidgets import QApplication
+from ui.main_window import MainWindow
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = ExcelAIApp(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    from ui.theme import STYLESHEET
+    app.setStyleSheet(STYLESHEET)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
